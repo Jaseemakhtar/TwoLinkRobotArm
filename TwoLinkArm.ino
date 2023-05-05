@@ -33,24 +33,38 @@ Adafruit_PWMServoDriver pwm = Adafruit_PWMServoDriver();
 // for max range. You'll have to tweak them as necessary to match the servos you
 // have!
 
-// #define SERVOMIN  150 // This is the 'minimum' pulse length count (out of 4096) // 70
-// #define SERVOMAX  600 // This is the 'maximum' pulse length count (out of 4096) // 520
-
 #define SERVOMIN  70 // This is the 'minimum' pulse length count (out of 4096) // 70
 #define SERVOMAX  520 // This is the 'maximum' pulse length count (out of 4096) // 520
-#define SERVOMAX_180_OFFSET 75 // 445 as 180
 
 #define USMIN  350 // This is the rounded 'minimum' microsecond length based on the minimum pulse of 150
 #define USMAX  2200 // This is the rounded 'maximum' microsecond length based on the maximum pulse of 600
 #define SERVO_FREQ 50 // Analog servos run at ~50 Hz updates
 
 #define ARM_LENGTH 85
-#define TOP_ARM_START_ANGLE 42  // servo 2 restrict below angle 42 deg
-#define MIN_Z_LENGTH 50 // 70mm
-#define MAX_Z_LENGTH 150 // 150mm
+#define TOP_ARM_START_OFFSET 42  // servo 2 restrict below angle 42 deg
 
-int sensorPin = A0;   // select the input pin for the potentiometer
-int sensorValue = 1;  // variable to store the value coming from the sensor
+#define LOWER_ARM 0 // Bottom servo
+#define UPPER_ARM 1 // Top servo
+
+int sensorPinX = A0;   // can be used with 2nd potentiometer to move on Y axis
+int sensorXValue = 0;  
+
+int sensorPinY = A1;   // can be used with 2nd potentiometer to move on Y axis
+int sensorYValue = 0;  
+
+double angle = 0.0;
+double angleIncrementer = 0.08;
+double COMPLETE_ROTATION = 2.0 * PI;
+int radius = 36;
+int xOffset = 80;
+int yOffset = 70;
+
+int previousServoPositions[2] = { 0, 0 };
+
+struct ArmPosition {
+  int bottom;
+  int top;
+};
 
 void setup() {
   Serial.begin(9600);
@@ -95,78 +109,48 @@ void setServoPulse(uint8_t n, double pulse) {
   pwm.setPWM(n, 0, pulse);
 }
 
-int zLength = 74;
-int servonum = 1;
-
 void loop() {
-  // Drive each servo one at a time using writeMicroseconds(), it's not precise due to calculation rounding!
-  // The writeMicroseconds() function is used to mimic the Arduino Servo library writeMicroseconds() behavior. 
-  // pwm.writeMicroseconds(0, 1200);
+  int x = (cos(angle) * radius) + xOffset;
+  int y = (sin(angle) * radius) + yOffset;
 
-  // for (uint16_t microsec = USMIN; microsec < USMAX; microsec++) {
-  //   pwm.writeMicroseconds(servonum, microsec);
-  // }
+  ArmPosition newPositions = getArmAngles(x, y);
 
-  // delay(500);
-  // for (uint16_t microsec = USMAX; microsec > USMIN; microsec--) {
-  //   pwm.writeMicroseconds(servonum, microsec);
-  // }
-
+  rotateServo(LOWER_ARM, newPositions.bottom);
+  rotateServo(UPPER_ARM, newPositions.top);
   
-  for(int i = MIN_Z_LENGTH; i <= MAX_Z_LENGTH; i++) {
-    updateZ(i);
+  angle = angle + angleIncrementer;
+
+  if (angle >= COMPLETE_ROTATION) {
+    angle = 0.0;
   }
 
-  delay(700);
-
-  for(int i = MAX_Z_LENGTH; i >= MIN_Z_LENGTH; i--) {
-    updateZ(i);
-  }
-
-  delay(700);
+  delay(10);
 }
 
-void testServoRotate() {
-  rotateServo(1, 0);
-  delay(1500);
-  rotateServo(1, 90);
-  delay(1500);
-  rotateServo(1, 180);
+ArmPosition getArmAngles(int x, int y) {
+  ArmPosition servoPositions;
+
+  double alpha = toDegrees(atan2(y, x));
+  double h = sqrt((x * x) + (y * y));
+
+  double beta = toDegrees(acos( (h / 2) / ARM_LENGTH));
+
+  double gamma = 180 - (beta + 90);
+
+  int theta1 = alpha + beta;
+  servoPositions.bottom = theta1;
+
+  int theta2 = gamma * 2;
+  servoPositions.top = theta2 - TOP_ARM_START_OFFSET;
+
+  return servoPositions;
 }
 
-// void rotateServo(int servo, int angle) {
-//   // int angleOffsetMap = map(angle, 0, 180, 0, 150); // the servos semi cirlce rotation seems from 0 to 150 :(
-//   int mapped = map(angle, 0, 180, SERVOMIN, SERVOMAX - SERVOMAX_180_OFFSET);
-//   pwm.setPWM(servo, 0, mapped);
-// }
+double toDegrees(double rad) {
+  return rad * (180 / PI);
+}
 
 void rotateServo(int servo, int angle) {
-  // int angleOffsetMap = map(angle, 0, 180, 0, 150); // the servos semi cirlce rotation seems from 0 to 150 :(
   int mapped = map(angle, 0, 180, USMIN, USMAX);
   pwm.writeMicroseconds(servo, mapped);
-}
-
-void updateZ(int distance) {
-  int a1 = ARM_LENGTH;
-  int b1 = ARM_LENGTH;
-  int c1 = distance;
-  int bAngle = getCosineAngle(a1, b1, c1) - TOP_ARM_START_ANGLE;
-
-  int a0 = ARM_LENGTH;
-  int b0 = distance;
-  int c0 = ARM_LENGTH;
-  int aAngle = getCosineAngle(a0, b0, c0) + 90;
-
-  Serial.println(distance);
-  Serial.print("B => "); Serial.print(bAngle); Serial.print(" A => "); Serial.println(aAngle); 
-  rotateServo(0, aAngle);
-  rotateServo(1, bAngle);
-}
-
-int getCosineAngle(int a, int b, int c) {
-  double armsRatio = ((c * c) - ((a * a) + (b * b))) / (double) (-2 * a * b);
-  double topArmAngleRad = acos(armsRatio);
-  int topArmAngleDegree = (topArmAngleRad * 4068) / 71;
-  
-  return topArmAngleDegree;
 }
